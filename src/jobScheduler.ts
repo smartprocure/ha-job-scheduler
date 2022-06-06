@@ -2,7 +2,7 @@ import nodeSchedule from 'node-schedule'
 import Redis from 'ioredis'
 import ms from 'ms'
 import _debug from 'debug'
-import { PubDelayed, Deferred, Delayed, Recurring } from './types'
+import { RunDelayed, Deferred, Delayed, Recurring } from './types'
 import { defer } from './util'
 import parser from 'cron-parser'
 import { RedisOptions } from 'ioredis'
@@ -59,10 +59,13 @@ export const jobScheduler = (opts?: RedisOptions) => {
     // Schedule last missed job if needed
     if (shouldPersistInvocations) {
       const isString = typeof rule === 'string'
+      // Parse rule
       const interval = isString
         ? parser.parseExpression(rule)
         : parser.parseExpression(rule.rule, { tz: rule.tz })
+      // Get previous invocation date
       const date = interval.prev()
+      // Was the job already run
       redis.exists(getPersistKey(date.getTime())).then((x) => {
         if (!x) {
           debug('missed job: %s (%s)', id, date)
@@ -100,13 +103,13 @@ export const jobScheduler = (opts?: RedisOptions) => {
   }
 
   /**
-   * Publish delayed one-time jobs for id. Check for jobs
-   * according to the recurrence rule. Default interval is every 10 seconds.
+   * Run delayed one-time jobs for id. Check for jobs according to the recurrence
+   * rule. Default interval is every minute.
    *
    * Guarantees at least one delivery.
    */
-  const publishDelayed: PubDelayed = (id, fn, rule) => {
-    rule = rule ?? '*/10 * * * * *'
+  const runDelayed: RunDelayed = (id, fn, rule) => {
+    rule = rule ?? '* * * * *'
     const key = `delayed:${id}`
     let deferred: Deferred<void>
 
@@ -140,5 +143,5 @@ export const jobScheduler = (opts?: RedisOptions) => {
     return { schedule, stop }
   }
 
-  return { scheduleRecurring, scheduleDelayed, publishDelayed }
+  return { scheduleRecurring, scheduleDelayed, runDelayed }
 }

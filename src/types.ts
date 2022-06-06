@@ -30,7 +30,7 @@ export type Recurring = (
   options: RecurringOptions
 ) => GracefulShutdown
 
-export type PubDelayed = (
+export type RunDelayed = (
   id: string,
   fn: DelayedFn,
   rule?: Rule

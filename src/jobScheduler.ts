@@ -58,7 +58,10 @@ export const jobScheduler = (opts?: RedisOptions) => {
     }
     // Schedule last missed job if needed
     if (shouldPersistInvocations) {
-      const interval = parser.parseExpression(rule)
+      const isString = typeof rule === 'string'
+      const interval = isString
+        ? parser.parseExpression(rule)
+        : parser.parseExpression(rule.rule, { tz: rule.tz })
       const date = interval.prev()
       redis.exists(getPersistKey(date.getTime())).then((x) => {
         if (!x) {

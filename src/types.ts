@@ -20,7 +20,7 @@ export interface RecurringOptions {
   persistScheduledMs?: number
 }
 
-export type Rule = string
+export type Rule = string | { rule: string; tz: string }
 export type RunFn = (date: Date) => Promise<void> | void
 
 export type Recurring = (

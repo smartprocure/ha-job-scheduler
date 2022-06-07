@@ -3,8 +3,7 @@ import Redis from 'ioredis'
 import ms from 'ms'
 import _debug from 'debug'
 import { RunDelayed, Deferred, Delayed, Recurring } from './types'
-import { defer } from './util'
-import parser from 'cron-parser'
+import { defer, getPreviousDate } from './util'
 import { RedisOptions } from 'ioredis'
 
 const debug = _debug('ha-job-scheduler')
@@ -19,7 +18,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
    *
    * Guarantees at most one delivery.
    */
-  const scheduleRecurring: Recurring = (id, rule, fn, options) => {
+  const scheduleRecurring: Recurring = (id, rule, runFn, options) => {
     const { lockExpireMs = ms('1m'), persistScheduledMs = ms('5m') } = options
     let deferred: Deferred<void>
     // Should invocations be persisted to Redis
@@ -32,18 +31,12 @@ export const jobScheduler = (opts?: RedisOptions) => {
       const scheduledTime = date.getTime()
       const lockKey = `schedulingLock:${id}:${scheduledTime}`
       const persistKey = getPersistKey(scheduledTime)
-      // That process that obtained the lock
+      // The process that obtained the lock
       const val = process.pid
-      // Attempt to get an exclusive lock. Lock expires in 1 minute.
-      const lockObtained = await redis.set(
-        lockKey,
-        val,
-        'PX',
-        lockExpireMs,
-        'NX'
-      )
+      // Attempt to get an exclusive lock.
+      const locked = await redis.set(lockKey, val, 'PX', lockExpireMs, 'NX')
       // Lock was obtained
-      if (lockObtained) {
+      if (locked) {
         debug('lock obtained: %s (%s)', id, date)
         deferred = defer()
         // Persist invocation
@@ -51,27 +44,26 @@ export const jobScheduler = (opts?: RedisOptions) => {
           await redis.set(persistKey, val, 'PX', persistScheduledMs)
         }
         // Run job
-        await fn(date)
+        await runFn(date)
         debug('job run: %s (%s)', id, date)
         deferred.done()
       }
     }
     // Schedule last missed job if needed
     if (shouldPersistInvocations) {
-      const isString = typeof rule === 'string'
-      // Parse rule
-      const interval = isString
-        ? parser.parseExpression(rule)
-        : parser.parseExpression(rule.rule, { tz: rule.tz })
       // Get previous invocation date
-      const date = interval.prev()
-      // Was the job already run
-      redis.exists(getPersistKey(date.getTime())).then((x) => {
-        if (!x) {
-          debug('missed job: %s (%s)', id, date)
-          run(date.toDate())
-        }
-      })
+      const date = getPreviousDate(rule)
+      const time = date.getTime()
+      // Elapsed time from last invocation was less than the persist TTL
+      if (Date.now() - time < persistScheduledMs) {
+        redis.exists(getPersistKey(time)).then((exists) => {
+          // Job was not run
+          if (!exists) {
+            debug('missed job: %s (%s)', id, date)
+            run(date)
+          }
+        })
+      }
     }
     // Schedule recurring job
     const schedule = nodeSchedule.scheduleJob(rule, run)
@@ -118,8 +110,8 @@ export const jobScheduler = (opts?: RedisOptions) => {
       const lockKey = `${key}:${scheduledTime}`
       const val = process.pid
       // Attempt to get an exclusive lock. Lock expires in 1 minute.
-      const lockObtained = await redis.set(lockKey, val, 'PX', ms('1m'), 'NX')
-      if (lockObtained) {
+      const locked = await redis.set(lockKey, val, 'PX', ms('1m'), 'NX')
+      if (locked) {
         deferred = defer()
         debug('delayed: %s', date)
         const upper = new Date().getTime()

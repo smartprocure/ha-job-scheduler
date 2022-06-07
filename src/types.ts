@@ -26,7 +26,7 @@ export type RunFn = (date: Date) => Promise<void> | void
 export type Recurring = (
   id: string,
   rule: Rule,
-  fn: RunFn,
+  runFn: RunFn,
   options: RecurringOptions
 ) => GracefulShutdown
 

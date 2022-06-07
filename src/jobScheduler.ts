@@ -19,7 +19,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
    * Guarantees at most one delivery.
    */
   const scheduleRecurring: Recurring = (id, rule, runFn, options) => {
-    const { lockExpireMs = ms('1m'), persistScheduledMs = ms('5m') } = options
+    const { lockExpireMs = ms('1m'), persistScheduledMs } = options
     let deferred: Deferred<void>
     // Should invocations be persisted to Redis
     const shouldPersistInvocations =

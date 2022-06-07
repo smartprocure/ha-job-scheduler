@@ -9,3 +9,5 @@ will ever successfully run the cron job.
 Previously missed invocation can be run by passing a non-zero value for
 `persistScheduledMs` to `scheduleRecurring`. This will persist invocations
 to Redis which can be also useful for debugging.
+
+Works well with [nats-jobs](https://www.npmjs.com/package/nats-jobs)

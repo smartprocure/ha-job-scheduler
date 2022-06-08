@@ -12,9 +12,10 @@ export const jobScheduler = (opts?: RedisOptions) => {
   const redis = opts ? new Redis(opts) : new Redis()
 
   /**
-   * Schedule a recurring job. fn will be called for every invocation of the rule.
-   *
-   * See: https://www.npmjs.com/package/node-schedule
+   * Schedule a recurring job. `runFn` will be called for every invocation of the rule.
+   * Set `persistScheduledMs` to a value greater than the frequency of the cron
+   * rule to guarantee that the last missed job will be run. This is useful for
+   * infrequent jobs that cannot be missed.
    *
    * Guarantees at most one delivery.
    */
@@ -24,7 +25,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
     // Should invocations be persisted to Redis
     const shouldPersistInvocations =
       typeof persistScheduledMs === 'number' && persistScheduledMs > 0
-    const persistKey = `jobRun:${id}`
+    const persistKey = `lastRun:${id}`
 
     // Called for each invocation
     const runJob = async (date: Date) => {
@@ -55,10 +56,8 @@ export const jobScheduler = (opts?: RedisOptions) => {
       const expectedLastRunTime = date.getTime()
       redis.get(persistKey).then((val) => {
         const lastRunTime = val ? Number.parseInt(val, 10) : 0
-        const lastRunTimeKnown =
-          Date.now() - expectedLastRunTime < persistScheduledMs
-        // Job was not run
-        if (lastRunTimeKnown && lastRunTime < expectedLastRunTime) {
+        // Last run time exists, but job was run prior to expected last run
+        if (val && lastRunTime < expectedLastRunTime) {
           debug('missed job - id: %s date: %s', id, date)
           runJob(date)
         }
@@ -75,9 +74,10 @@ export const jobScheduler = (opts?: RedisOptions) => {
   }
 
   /**
-   * Schedule a single job to be published at a later date.
+   * Schedule data to be delivered at a later date. Duplicate payloads
+   * will be ignored.
    *
-   * scheduleFor accepts a number of milliseconds in the future
+   * `scheduleFor` accepts a number of milliseconds in the future
    * or a date.
    *
    * Returns a boolean indicating if the job was successfully scheduled.
@@ -93,12 +93,12 @@ export const jobScheduler = (opts?: RedisOptions) => {
   }
 
   /**
-   * Run delayed one-time jobs for id. Check for jobs according to the recurrence
-   * rule. Default interval is every minute.
+   * Check for delayed items according to the recurrence rule. Default
+   * interval is every minute. Calls `runFn` for each item.
    *
    * Guarantees at least one delivery.
    */
-  const runDelayed: RunDelayed = (id, fn, rule) => {
+  const runDelayed: RunDelayed = (id, runFn, rule) => {
     rule = rule ?? '* * * * *'
     const key = `delayed:${id}`
     let deferred: Deferred<void>
@@ -113,12 +113,12 @@ export const jobScheduler = (opts?: RedisOptions) => {
         debug('lock obtained - id: %s date: %s pid: %s', id, date, val)
         deferred = defer()
         const upper = new Date().getTime()
-        // Get delayed jobs where the delayed timestamp is <= now
+        // Get delayed items where the delayed timestamp is <= now
         const items = await redis.zrangebyscoreBuffer(key, '-inf', upper)
         if (items.length) {
-          debug('delayed jobs found: %s (%d)', id, items.length)
-          // Call fn for each message
-          await Promise.all(items.map((data) => fn(id, data)))
+          debug('delayed items found - id: %s num: %d', id, items.length)
+          // Call runFn for each item
+          await Promise.all(items.map((data) => runFn(id, data)))
           // Remove delayed jobs
           await redis.zremrangebyscore(key, '-inf', upper)
         }

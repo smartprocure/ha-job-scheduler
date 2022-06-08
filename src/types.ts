@@ -32,6 +32,6 @@ export type Recurring = (
 
 export type RunDelayed = (
   id: string,
-  fn: DelayedFn,
+  runFn: DelayedFn,
   rule?: Rule
 ) => GracefulShutdown

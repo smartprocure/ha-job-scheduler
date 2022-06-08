@@ -18,14 +18,13 @@ export const jobScheduler = (opts?: RedisOptions) => {
    *
    * Guarantees at most one delivery.
    */
-  const scheduleRecurring: Recurring = (id, rule, runFn, options) => {
+  const scheduleRecurring: Recurring = (id, rule, runFn, options = {}) => {
     const { lockExpireMs = ms('1m'), persistScheduledMs } = options
     let deferred: Deferred<void>
     // Should invocations be persisted to Redis
     const shouldPersistInvocations =
       typeof persistScheduledMs === 'number' && persistScheduledMs > 0
-    const getPersistKey = (scheduledTime: number) =>
-      `jobRun:${id}:${scheduledTime}`
+    const persistKey = `jobRun:${id}`
 
     // Called for each invocation
     const runJob = async (date: Date) => {
@@ -37,12 +36,11 @@ export const jobScheduler = (opts?: RedisOptions) => {
       const locked = await redis.set(lockKey, val, 'PX', lockExpireMs, 'NX')
       // Lock was obtained
       if (locked) {
-        debug('lock obtained: %s (%s)', id, date)
+        debug('lock obtained - id: %s date: %s pid: %s', id, date, val)
         deferred = defer()
         // Persist invocation
         if (shouldPersistInvocations) {
-          const persistKey = getPersistKey(scheduledTime)
-          await redis.set(persistKey, val, 'PX', persistScheduledMs)
+          await redis.set(persistKey, scheduledTime, 'PX', persistScheduledMs)
         }
         // Run job
         await runFn(date)
@@ -54,17 +52,17 @@ export const jobScheduler = (opts?: RedisOptions) => {
     if (shouldPersistInvocations) {
       // Get previous invocation date
       const date = getPreviousDate(rule)
-      const time = date.getTime()
-      // Elapsed time from last invocation was less than the persist TTL
-      if (Date.now() - time < persistScheduledMs) {
-        redis.exists(getPersistKey(time)).then((exists) => {
-          // Job was not run
-          if (!exists) {
-            debug('missed job: %s (%s)', id, date)
-            runJob(date)
-          }
-        })
-      }
+      const expectedLastRunTime = date.getTime()
+      redis.get(persistKey).then((val) => {
+        const lastRunTime = val ? Number.parseInt(val, 10) : 0
+        const lastRunTimeKnown =
+          Date.now() - expectedLastRunTime < persistScheduledMs
+        // Job was not run
+        if (lastRunTimeKnown && lastRunTime < expectedLastRunTime) {
+          debug('missed job - id: %s date: %s', id, date)
+          runJob(date)
+        }
+      })
     }
     // Schedule recurring job
     const schedule = nodeSchedule.scheduleJob(rule, runJob)
@@ -112,7 +110,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
       // Attempt to get an exclusive lock. Lock expires in 1 minute.
       const locked = await redis.set(lockKey, val, 'PX', ms('1m'), 'NX')
       if (locked) {
-        debug('lock obtained: %s (%s)', id, date)
+        debug('lock obtained - id: %s date: %s pid: %s', id, date, val)
         deferred = defer()
         const upper = new Date().getTime()
         // Get delayed jobs where the delayed timestamp is <= now

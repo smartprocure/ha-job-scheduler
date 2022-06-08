@@ -26,11 +26,11 @@ export const jobScheduler = (opts?: RedisOptions) => {
       typeof persistScheduledMs === 'number' && persistScheduledMs > 0
     const getPersistKey = (scheduledTime: number) =>
       `jobRun:${id}:${scheduledTime}`
+
     // Called for each invocation
-    const run = async (date: Date) => {
+    const runJob = async (date: Date) => {
       const scheduledTime = date.getTime()
       const lockKey = `schedulingLock:${id}:${scheduledTime}`
-      const persistKey = getPersistKey(scheduledTime)
       // The process that obtained the lock
       const val = process.pid
       // Attempt to get an exclusive lock.
@@ -41,14 +41,15 @@ export const jobScheduler = (opts?: RedisOptions) => {
         deferred = defer()
         // Persist invocation
         if (shouldPersistInvocations) {
+          const persistKey = getPersistKey(scheduledTime)
           await redis.set(persistKey, val, 'PX', persistScheduledMs)
         }
         // Run job
         await runFn(date)
-        debug('job run: %s (%s)', id, date)
         deferred.done()
       }
     }
+
     // Schedule last missed job if needed
     if (shouldPersistInvocations) {
       // Get previous invocation date
@@ -60,16 +61,15 @@ export const jobScheduler = (opts?: RedisOptions) => {
           // Job was not run
           if (!exists) {
             debug('missed job: %s (%s)', id, date)
-            run(date)
+            runJob(date)
           }
         })
       }
     }
     // Schedule recurring job
-    const schedule = nodeSchedule.scheduleJob(rule, run)
+    const schedule = nodeSchedule.scheduleJob(rule, runJob)
     // Handle shutdown gracefully
     const stop = () => {
-      debug('stopping recurring: %s', id)
       schedule.cancel()
       return deferred?.promise
     }
@@ -112,13 +112,13 @@ export const jobScheduler = (opts?: RedisOptions) => {
       // Attempt to get an exclusive lock. Lock expires in 1 minute.
       const locked = await redis.set(lockKey, val, 'PX', ms('1m'), 'NX')
       if (locked) {
+        debug('lock obtained: %s (%s)', id, date)
         deferred = defer()
-        debug('delayed: %s', date)
         const upper = new Date().getTime()
         // Get delayed jobs where the delayed timestamp is <= now
         const items = await redis.zrangebyscoreBuffer(key, '-inf', upper)
         if (items.length) {
-          debug('delayed jobs found: %d', items.length)
+          debug('delayed jobs found: %s (%d)', id, items.length)
           // Call fn for each message
           await Promise.all(items.map((data) => fn(id, data)))
           // Remove delayed jobs

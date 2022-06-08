@@ -8,8 +8,9 @@
   "repository": "git://github.com/smartprocure/ha-job-scheduler.git",
   "scripts": {
     "prepare": "npm run build",
-    "build": "tsc --declaration",
+    "build": "npm run clean && tsc --declaration",
     "test": "npm run lint",
+    "clean": "rm -rf dist",
     "lint": "eslint src/**"
   },
   "keywords": [

@@ -59,9 +59,8 @@ export const jobScheduler = (opts?: RedisOptions) => {
       const date = getPreviousDate(rule)
       const expectedLastRunTime = date.getTime()
       redis.get(persistKey).then((val) => {
-        const lastRunTime = val ? Number.parseInt(val, 10) : 0
         // Last run time exists, but job was run prior to expected last run
-        if (val && lastRunTime < expectedLastRunTime) {
+        if (val && Number.parseInt(val, 10) < expectedLastRunTime) {
           debug('missed job - id: %s date: %s', id, date)
           runJob(date)
         }

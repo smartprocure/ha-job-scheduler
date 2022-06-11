@@ -2,7 +2,7 @@ import nodeSchedule from 'node-schedule'
 import Redis from 'ioredis'
 import ms from 'ms'
 import _debug from 'debug'
-import { RunDelayed, Deferred, Delayed, Recurring } from './types'
+import { RunDelayed, Deferred, Delayed, Recurring, StopFn } from './types'
 import { defer, getPreviousDate } from './util'
 import { RedisOptions } from 'ioredis'
 
@@ -10,6 +10,7 @@ const debug = _debug('ha-job-scheduler')
 
 export const jobScheduler = (opts?: RedisOptions) => {
   const redis = opts ? new Redis(opts) : new Redis()
+  const stopFns: StopFn[] = []
 
   /**
    * Schedule a recurring job. `runFn` will be called for every invocation of the rule.
@@ -70,6 +71,8 @@ export const jobScheduler = (opts?: RedisOptions) => {
       schedule.cancel()
       return deferred?.promise
     }
+    stopFns.push(stop)
+
     return { schedule, stop }
   }
 
@@ -117,10 +120,14 @@ export const jobScheduler = (opts?: RedisOptions) => {
         const items = await redis.zrangebyscoreBuffer(key, '-inf', upper)
         if (items.length) {
           debug('delayed items found - id: %s num: %d', id, items.length)
-          // Call runFn for each item
-          await Promise.all(items.map((data) => runFn(id, data)))
-          // Remove delayed jobs
-          await redis.zremrangebyscore(key, '-inf', upper)
+          await Promise.all(
+            items.map(async (data) => {
+              // Call run fn
+              await runFn(id, data)
+              // Remove from set
+              await redis.zrem(key, data)
+            })
+          )
         }
         deferred.done()
       }
@@ -130,8 +137,18 @@ export const jobScheduler = (opts?: RedisOptions) => {
       schedule.cancel()
       return deferred?.promise
     }
+    stopFns.push(stop)
+
     return { schedule, stop }
   }
 
-  return { scheduleRecurring, scheduleDelayed, runDelayed }
+  /**
+   * Call stop on all schedulers and close Redis connection
+   */
+  const stop = async () => {
+    await Promise.all(stopFns.map((stop) => stop()))
+    redis.disconnect()
+  }
+
+  return { scheduleRecurring, scheduleDelayed, runDelayed, stop }
 }

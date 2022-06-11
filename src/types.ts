@@ -12,8 +12,8 @@ export interface Deferred<A> {
 }
 
 export type DelayedFn = (id: string, data: Uint8Array) => Promise<void> | void
-
-export type GracefulShutdown = { schedule: Job; stop: () => Promise<void> }
+export type StopFn = () => Promise<void>
+export type GracefulShutdown = { schedule: Job; stop: StopFn }
 
 export interface RecurringOptions {
   lockExpireMs?: number

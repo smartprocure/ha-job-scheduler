@@ -24,16 +24,17 @@ export const jobScheduler = (opts?: RedisOptions) => {
    */
   const scheduleRecurring: Recurring = (id, rule, runFn, options = {}) => {
     const { lockExpireMs, persistScheduledMs } = options
+    const key = `recurring:${id}`
     let deferred: Deferred<void>
     // Should invocations be persisted to Redis
     const shouldPersistInvocations =
       typeof persistScheduledMs === 'number' && persistScheduledMs > 0
-    const persistKey = `lastRun:${id}`
+    const persistKey = `${key}:lastRun`
 
     // Called for each invocation
     const runJob = async (date: Date) => {
       const scheduledTime = date.getTime()
-      const lockKey = `schedulingLock:${id}:${scheduledTime}`
+      const lockKey = `${key}:${scheduledTime}:lock`
       // The process that obtained the lock
       const val = process.pid
       // Attempt to get an exclusive lock.
@@ -117,7 +118,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
     // Poll Redis according to rule frequency
     const schedule = nodeSchedule.scheduleJob(rule, async (date) => {
       const scheduledTime = date.getTime()
-      const lockKey = `${key}:${scheduledTime}`
+      const lockKey = `${key}:${scheduledTime}:lock`
       const val = process.pid
       // Attempt to get an exclusive lock. Lock expires in 1 minute.
       const locked = await getLock(lockKey, lockExpireMs)

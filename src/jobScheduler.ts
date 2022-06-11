@@ -109,10 +109,12 @@ export const jobScheduler = (opts?: RedisOptions) => {
     const key = `delayed:${id}`
     let deferred: Deferred<void>
 
-    // Get delayed items where the delayed timestamp is <= now
+    // Get delayed items where the delayed timestamp is <= now.
+    // Returns up to limit number of items.
     const getItems = (upper: number) =>
       redis.zrangebyscoreBuffer(key, '-inf', upper, 'LIMIT', 0, limit)
 
+    // Poll Redis according to rule frequency
     const schedule = nodeSchedule.scheduleJob(rule, async (date) => {
       const scheduledTime = date.getTime()
       const lockKey = `${key}:${scheduledTime}`

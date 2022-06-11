@@ -33,6 +33,7 @@ export type Recurring = (
 export interface DelayedOptions {
   rule?: Rule
   lockExpireMs?: number
+  limit?: number
 }
 
 export type RunDelayed = (

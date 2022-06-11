@@ -12,6 +12,8 @@ export const jobScheduler = (opts?: RedisOptions) => {
   const redis = opts ? new Redis(opts) : new Redis()
   const stopFns: StopFn[] = []
 
+  const getLock = (lockKey: string, lockExpireMs = ms('1m')) =>
+    redis.set(lockKey, process.pid, 'PX', lockExpireMs, 'NX')
   /**
    * Schedule a recurring job. `runFn` will be called for every invocation of the rule.
    * Set `persistScheduledMs` to a value greater than the frequency of the cron
@@ -21,7 +23,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
    * Guarantees at most one delivery.
    */
   const scheduleRecurring: Recurring = (id, rule, runFn, options = {}) => {
-    const { lockExpireMs = ms('1m'), persistScheduledMs } = options
+    const { lockExpireMs, persistScheduledMs } = options
     let deferred: Deferred<void>
     // Should invocations be persisted to Redis
     const shouldPersistInvocations =
@@ -35,7 +37,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
       // The process that obtained the lock
       const val = process.pid
       // Attempt to get an exclusive lock.
-      const locked = await redis.set(lockKey, val, 'PX', lockExpireMs, 'NX')
+      const locked = await getLock(lockKey, lockExpireMs)
       // Lock was obtained
       if (locked) {
         debug('lock obtained - id: %s date: %s pid: %s', id, date, val)
@@ -103,22 +105,25 @@ export const jobScheduler = (opts?: RedisOptions) => {
    * Guarantees at least one delivery.
    */
   const runDelayed: RunDelayed = (id, runFn, opts = {}) => {
-    const { rule = '* * * * *', lockExpireMs = ms('1m') } = opts
+    const { rule = '* * * * *', lockExpireMs, limit = 100 } = opts
     const key = `delayed:${id}`
     let deferred: Deferred<void>
+
+    // Get delayed items where the delayed timestamp is <= now
+    const getItems = (upper: number) =>
+      redis.zrangebyscoreBuffer(key, '-inf', upper, 'LIMIT', 0, limit)
 
     const schedule = nodeSchedule.scheduleJob(rule, async (date) => {
       const scheduledTime = date.getTime()
       const lockKey = `${key}:${scheduledTime}`
       const val = process.pid
       // Attempt to get an exclusive lock. Lock expires in 1 minute.
-      const locked = await redis.set(lockKey, val, 'PX', lockExpireMs, 'NX')
+      const locked = await getLock(lockKey, lockExpireMs)
       if (locked) {
         debug('lock obtained - id: %s date: %s pid: %s', id, date, val)
         deferred = defer()
         const upper = new Date().getTime()
-        // Get delayed items where the delayed timestamp is <= now
-        const items = await redis.zrangebyscoreBuffer(key, '-inf', upper)
+        const items = await getItems(upper)
         if (items.length) {
           debug('delayed items found - id: %s num: %d', id, items.length)
           // Call run fn

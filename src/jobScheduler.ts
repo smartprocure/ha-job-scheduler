@@ -101,8 +101,8 @@ export const jobScheduler = (opts?: RedisOptions) => {
    *
    * Guarantees at least one delivery.
    */
-  const runDelayed: RunDelayed = (id, runFn, rule) => {
-    rule = rule ?? '* * * * *'
+  const runDelayed: RunDelayed = (id, runFn, opts = {}) => {
+    const { rule = '* * * * *', lockExpireMs = ms('1m') } = opts
     const key = `delayed:${id}`
     let deferred: Deferred<void>
 
@@ -111,7 +111,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
       const lockKey = `${key}:${scheduledTime}`
       const val = process.pid
       // Attempt to get an exclusive lock. Lock expires in 1 minute.
-      const locked = await redis.set(lockKey, val, 'PX', ms('1m'), 'NX')
+      const locked = await redis.set(lockKey, val, 'PX', lockExpireMs, 'NX')
       if (locked) {
         debug('lock obtained - id: %s date: %s pid: %s', id, date, val)
         deferred = defer()

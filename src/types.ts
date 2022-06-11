@@ -30,8 +30,13 @@ export type Recurring = (
   options?: RecurringOptions
 ) => GracefulShutdown
 
+export interface DelayedOptions {
+  rule?: Rule
+  lockExpireMs?: number
+}
+
 export type RunDelayed = (
   id: string,
   runFn: DelayedFn,
-  rule?: Rule
+  options?: DelayedOptions
 ) => GracefulShutdown

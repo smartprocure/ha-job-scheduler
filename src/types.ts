@@ -11,7 +11,7 @@ export interface Deferred<A> {
   promise: Promise<A>
 }
 
-export type DelayedFn = (id: string, data: Uint8Array) => Promise<void> | void
+export type DelayedFn = (id: string, data: Uint8Array[]) => Promise<void> | void
 export type StopFn = () => Promise<void>
 export type GracefulShutdown = { schedule: Job; stop: StopFn }
 

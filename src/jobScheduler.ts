@@ -83,7 +83,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
    * `scheduleFor` accepts a number of milliseconds in the future
    * or a date.
    *
-   * Returns a boolean indicating if the job was successfully scheduled.
+   * Returns a boolean indicating if the item  was successfully scheduled.
    */
   const scheduleDelayed: Delayed = async (id, data, scheduleFor) => {
     const key = `delayed:${id}`
@@ -97,7 +97,8 @@ export const jobScheduler = (opts?: RedisOptions) => {
 
   /**
    * Check for delayed items according to the recurrence rule. Default
-   * interval is every minute. Calls `runFn` for each item.
+   * interval is every minute. Calls `runFn` for batch of items where
+   * the delayed timestamp is <= now.
    *
    * Guarantees at least one delivery.
    */
@@ -120,14 +121,10 @@ export const jobScheduler = (opts?: RedisOptions) => {
         const items = await redis.zrangebyscoreBuffer(key, '-inf', upper)
         if (items.length) {
           debug('delayed items found - id: %s num: %d', id, items.length)
-          await Promise.all(
-            items.map(async (data) => {
-              // Call run fn
-              await runFn(id, data)
-              // Remove from set
-              await redis.zrem(key, data)
-            })
-          )
+          // Call run fn
+          await runFn(id, items)
+          // Remove delayed items
+          await redis.zremrangebyscore(key, '-inf', upper)
         }
         deferred.done()
       }

@@ -24,9 +24,12 @@ scheduleRecurring(
 ```
 
 Schedule a recurring job. `runFn` will be called for every invocation of the rule.
+
 Set `persistScheduledMs` to a value greater than the frequency of the cron
 rule to guarantee that the last missed job will be run. This is useful for
-infrequent jobs that cannot be missed.
+infrequent jobs that cannot be missed. For example, if you have a job that runs
+at 6am daily, you might want to set `persistScheduledMs` to `ms('25h')` so that
+a missed run will be attempted up to one hour past the scheduled invocation.
 
 Guarantees at most one delivery.
 

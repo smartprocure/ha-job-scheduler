@@ -58,8 +58,8 @@ export const jobScheduler = (opts?: RedisOptions) => {
         }
         // Run job
         await runFn(date)
-        deferred.done()
       }
+      deferred.done()
     }
 
     // Schedule last missed job if needed
@@ -149,8 +149,8 @@ export const jobScheduler = (opts?: RedisOptions) => {
           // Remove delayed items
           await redis.zremrangebyscore(key, '-inf', upper)
         }
-        deferred.done()
       }
+      deferred.done()
     })
 
     /**

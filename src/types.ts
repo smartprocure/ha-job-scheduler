@@ -11,9 +11,9 @@ export interface Deferred<A> {
   promise: Promise<A>
 }
 
-export type DelayedFn = (id: string, data: Uint8Array) => Promise<void> | void
-
-export type GracefulShutdown = { schedule: Job; stop: () => Promise<void> }
+export type DelayedFn = (data: Uint8Array[]) => Promise<void> | void
+export type StopFn = () => Promise<void>
+export type GracefulShutdown = { schedule: Job; stop: StopFn }
 
 export interface RecurringOptions {
   lockExpireMs?: number
@@ -30,8 +30,14 @@ export type Recurring = (
   options?: RecurringOptions
 ) => GracefulShutdown
 
+export interface DelayedOptions {
+  rule?: Rule
+  lockExpireMs?: number
+  limit?: number
+}
+
 export type RunDelayed = (
   id: string,
   runFn: DelayedFn,
-  rule?: Rule
+  options?: DelayedOptions
 ) => GracefulShutdown

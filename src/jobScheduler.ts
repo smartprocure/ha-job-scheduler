@@ -145,7 +145,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
         if (items.length) {
           debug('delayed items found - id: %s num: %d', id, items.length)
           // Call run fn
-          await runFn(id, items)
+          await runFn(items)
           // Remove delayed items
           await redis.zremrangebyscore(key, '-inf', upper)
         }

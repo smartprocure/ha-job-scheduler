@@ -8,17 +8,26 @@ import { RedisOptions } from 'ioredis'
 
 const debug = _debug('ha-job-scheduler')
 
+/**
+ * Uses Redis to scheduling recurring jobs or delayed jobs.
+ */
 export const jobScheduler = (opts?: RedisOptions) => {
   const redis = opts ? new Redis(opts) : new Redis()
   const stopFns: StopFn[] = []
 
+  /**
+   * Attempt to get a lock for the lock key, `lockKey`, lasting `lockExpireMs`.
+   */
   const getLock = (lockKey: string, lockExpireMs = ms('1m')) =>
     redis.set(lockKey, process.pid, 'PX', lockExpireMs, 'NX')
   /**
    * Schedule a recurring job. `runFn` will be called for every invocation of the rule.
+   *
    * Set `persistScheduledMs` to a value greater than the frequency of the cron
    * rule to guarantee that the last missed job will be run. This is useful for
-   * infrequent jobs that cannot be missed.
+   * infrequent jobs that cannot be missed. For example, if you have a job that runs
+   * at 6am daily, you might want to set `persistScheduledMs` to `ms('25h')` so that
+   * a missed run will be attempted up to one hour past the scheduled invocation.
    *
    * Guarantees at most one delivery.
    */
@@ -33,6 +42,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
 
     // Called for each invocation
     const runJob = async (date: Date) => {
+      deferred = defer()
       const scheduledTime = date.getTime()
       const lockKey = `${key}:${scheduledTime}:lock`
       // The process that obtained the lock
@@ -42,7 +52,6 @@ export const jobScheduler = (opts?: RedisOptions) => {
       // Lock was obtained
       if (locked) {
         debug('lock obtained - id: %s date: %s pid: %s', id, date, val)
-        deferred = defer()
         // Persist invocation
         if (shouldPersistInvocations) {
           await redis.set(persistKey, scheduledTime, 'PX', persistScheduledMs)
@@ -68,7 +77,10 @@ export const jobScheduler = (opts?: RedisOptions) => {
     }
     // Schedule recurring job
     const schedule = nodeSchedule.scheduleJob(rule, runJob)
-    // Handle shutdown gracefully
+    /**
+     * Stop the scheduler. Awaits the completion of the current invocation
+     * before resolving.
+     */
     const stop = () => {
       schedule.cancel()
       return deferred?.promise
@@ -78,44 +90,49 @@ export const jobScheduler = (opts?: RedisOptions) => {
     return { schedule, stop }
   }
 
+  const getDelayedKey = (id: string) => `delayed:${id}`
+
   /**
    * Schedule data to be delivered at a later date. Duplicate payloads
    * will be ignored.
    *
-   * `scheduleFor` accepts a number of milliseconds in the future
-   * or a date.
+   * `scheduleFor` accepts a number of milliseconds in the future or a date.
    *
    * Returns a boolean indicating if the item  was successfully scheduled.
    */
   const scheduleDelayed: Delayed = async (id, data, scheduleFor) => {
-    const key = `delayed:${id}`
+    const key = getDelayedKey(id)
     const score =
       typeof scheduleFor === 'number'
         ? new Date().getTime() + scheduleFor
         : scheduleFor.getTime()
+    // Add data to sorted set
     const res = await redis.zadd(key, score, Buffer.from(data))
     return res === 1
   }
 
   /**
    * Check for delayed items according to the recurrence rule. Default
-   * interval is every minute. Calls `runFn` for batch of items where
+   * interval is every minute. Calls `runFn` for the batch of items where
    * the delayed timestamp is <= now.
    *
    * Guarantees at least one delivery.
    */
-  const runDelayed: RunDelayed = (id, runFn, opts = {}) => {
-    const { rule = '* * * * *', lockExpireMs, limit = 100 } = opts
-    const key = `delayed:${id}`
+  const runDelayed: RunDelayed = (id, runFn, options = {}) => {
+    const { rule = '* * * * *', lockExpireMs, limit = 100 } = options
+    const key = getDelayedKey(id)
     let deferred: Deferred<void>
 
-    // Get delayed items where the delayed timestamp is <= now.
-    // Returns up to limit number of items.
+    /**
+     * Get delayed items where the delayed timestamp is <= now.
+     * Returns up to limit number of items.
+     */
     const getItems = (upper: number) =>
       redis.zrangebyscoreBuffer(key, '-inf', upper, 'LIMIT', 0, limit)
 
     // Poll Redis according to rule frequency
     const schedule = nodeSchedule.scheduleJob(rule, async (date) => {
+      deferred = defer()
       const scheduledTime = date.getTime()
       const lockKey = `${key}:${scheduledTime}:lock`
       const val = process.pid
@@ -123,7 +140,6 @@ export const jobScheduler = (opts?: RedisOptions) => {
       const locked = await getLock(lockKey, lockExpireMs)
       if (locked) {
         debug('lock obtained - id: %s date: %s pid: %s', id, date, val)
-        deferred = defer()
         const upper = new Date().getTime()
         const items = await getItems(upper)
         if (items.length) {
@@ -137,6 +153,10 @@ export const jobScheduler = (opts?: RedisOptions) => {
       }
     })
 
+    /**
+     * Stop the scheduler. Awaits the completion of the current invocation
+     * before resolving.
+     */
     const stop = () => {
       schedule.cancel()
       return deferred?.promise
@@ -147,7 +167,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
   }
 
   /**
-   * Call stop on all schedulers and close Redis connection
+   * Call stop on all schedulers and close the Redis connection
    */
   const stop = async () => {
     await Promise.all(stopFns.map((stop) => stop()))

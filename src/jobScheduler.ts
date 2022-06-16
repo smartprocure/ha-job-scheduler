@@ -29,6 +29,8 @@ export const jobScheduler = (opts?: RedisOptions) => {
    * at 6am daily, you might want to set `persistScheduledMs` to `ms('25h')` so that
    * a missed run will be attempted up to one hour past the scheduled invocation.
    *
+   * The `id` should be unique for the rule/runFn pair.
+   *
    * Guarantees at most one delivery.
    */
   const scheduleRecurring: Recurring = (id, rule, runFn, options = {}) => {
@@ -45,13 +47,11 @@ export const jobScheduler = (opts?: RedisOptions) => {
       deferred = defer()
       const scheduledTime = date.getTime()
       const lockKey = `${key}:${scheduledTime}:lock`
-      // The process that obtained the lock
-      const val = process.pid
       // Attempt to get an exclusive lock.
       const locked = await getLock(lockKey, lockExpireMs)
       // Lock was obtained
       if (locked) {
-        debug('lock obtained - id: %s date: %s pid: %s', id, date, val)
+        debug('lock obtained - id: %s date: %s', id, date)
         // Persist invocation
         if (shouldPersistInvocations) {
           await redis.set(persistKey, scheduledTime, 'PX', persistScheduledMs)
@@ -67,10 +67,12 @@ export const jobScheduler = (opts?: RedisOptions) => {
       // Get previous invocation date
       const date = getPreviousDate(rule)
       const expectedLastRunTime = date.getTime()
+      // Get last run time
       redis.get(persistKey).then((val) => {
         // Last run time exists and job was run prior to expected last run
         if (val && Number.parseInt(val, 10) < expectedLastRunTime) {
           debug('missed job - id: %s date: %s', id, date)
+          // Run job with previous invocation date
           runJob(date)
         }
       })
@@ -94,14 +96,14 @@ export const jobScheduler = (opts?: RedisOptions) => {
 
   /**
    * Schedule data to be delivered at a later date. Duplicate payloads
-   * will be ignored.
-   *
-   * `scheduleFor` accepts a number of milliseconds in the future or a date.
+   * will be ignored. `scheduleFor` accepts a number of milliseconds
+   * in the future or a date. Use in conjunction with `runDelayed`.
    *
    * Returns a boolean indicating if the item  was successfully scheduled.
    */
   const scheduleDelayed: Delayed = async (id, data, scheduleFor) => {
     const key = getDelayedKey(id)
+    // Timestamp for delivery
     const score =
       typeof scheduleFor === 'number'
         ? new Date().getTime() + scheduleFor
@@ -114,7 +116,10 @@ export const jobScheduler = (opts?: RedisOptions) => {
   /**
    * Check for delayed items according to the recurrence rule. Default
    * interval is every minute. Calls `runFn` for the batch of items where
-   * the delayed timestamp is <= now.
+   * the delayed timestamp is <= now. The default number of items to
+   * retrieve at one time is 100.
+   *
+   * The `id` parameter should match the `id` passed to `scheduleDelayed`. 
    *
    * Guarantees at least one delivery.
    */
@@ -135,20 +140,19 @@ export const jobScheduler = (opts?: RedisOptions) => {
       deferred = defer()
       const scheduledTime = date.getTime()
       const lockKey = `${key}:${scheduledTime}:lock`
-      const val = process.pid
       // Attempt to get an exclusive lock. Lock expires in 1 minute.
       const locked = await getLock(lockKey, lockExpireMs)
       if (locked) {
-        debug('lock obtained - id: %s date: %s pid: %s', id, date, val)
-        const upper = new Date().getTime()
-        const items = await getItems(upper)
+        debug('lock obtained - id: %s date: %s', id, date)
+        const now = new Date().getTime()
+        const items = await getItems(now)
         if (items.length) {
           debug('delayed items found - id: %s num: %d', id, items.length)
           // Call run fn
           // TODO: Maybe return an array of tuples with the data and the score (scheduled time)
           await runFn(items)
           // Remove delayed items
-          await redis.zremrangebyscore(key, '-inf', upper)
+          await redis.zremrangebyscore(key, '-inf', now)
         }
       }
       deferred.done()

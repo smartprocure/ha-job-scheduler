@@ -59,11 +59,10 @@ process.on('SIGINT', shutDown)
 ## scheduleDelayed
 
 Schedule data to be delivered at a later date. Duplicate payloads
-will be ignored.
+will be ignored. `scheduleFor` accepts a number of milliseconds
+in the future or a date. Use in conjunction with `runDelayed`.
 
-`scheduleFor` accepts a number of milliseconds in the future or a date.
-
-Returns a boolean indicating if the item was successfully scheduled.
+Returns a boolean indicating if the item  was successfully scheduled.
 
 ```typescript
 scheduleDelayed(
@@ -88,7 +87,10 @@ for (let i = 1; i <= 3; i++) {
 
 Check for delayed items according to the recurrence rule. Default
 interval is every minute. Calls `runFn` for the batch of items where
-the delayed timestamp is <= now.
+the delayed timestamp is <= now. The default number of items to
+retrieve at one time is 100.
+
+The `id` parameter should match the `id` passed to `scheduleDelayed`. 
 
 Guarantees at least one delivery.
 

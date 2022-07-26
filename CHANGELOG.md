@@ -1,3 +1,7 @@
+# 0.3.0
+
+* Export `node-schedule` types.
+
 # 0.2.0
 
 * Cleanup.

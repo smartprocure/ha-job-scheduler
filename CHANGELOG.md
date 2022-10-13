@@ -1,3 +1,7 @@
+# 0.4.0
+
+* Emit events: `schedule:recurring`, `schedule:delayed`, `run:recurring`, `run:delayed`.
+
 # 0.3.0
 
 * Export `node-schedule` types.

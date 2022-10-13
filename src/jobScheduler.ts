@@ -2,9 +2,17 @@ import nodeSchedule from 'node-schedule'
 import Redis from 'ioredis'
 import ms from 'ms'
 import _debug from 'debug'
-import { RunDelayed, Deferred, Delayed, Recurring, StopFn } from './types'
+import {
+  RunDelayed,
+  Deferred,
+  Delayed,
+  Recurring,
+  StopFn,
+  Events,
+} from './types'
 import { defer, getPreviousDate } from './util'
 import { RedisOptions } from 'ioredis'
+import EventEmitter from 'eventemitter3'
 
 const debug = _debug('ha-job-scheduler')
 
@@ -14,25 +22,17 @@ const debug = _debug('ha-job-scheduler')
 export const jobScheduler = (opts?: RedisOptions) => {
   const redis = opts ? new Redis(opts) : new Redis()
   const stopFns: StopFn[] = []
+  const emitter = new EventEmitter<Events>()
+  const emit = (event: Events, data: object) => {
+    emitter.emit(event, { type: event, ...data })
+  }
 
   /**
    * Attempt to get a lock for the lock key, `lockKey`, lasting `lockExpireMs`.
    */
   const getLock = (lockKey: string, lockExpireMs = ms('1m')) =>
     redis.set(lockKey, process.pid, 'PX', lockExpireMs, 'NX')
-  /**
-   * Schedule a recurring job. `runFn` will be called for every invocation of the rule.
-   *
-   * Set `persistScheduledMs` to a value greater than the frequency of the cron
-   * rule to guarantee that the last missed job will be run. This is useful for
-   * infrequent jobs that cannot be missed. For example, if you have a job that runs
-   * at 6am daily, you might want to set `persistScheduledMs` to `ms('25h')` so that
-   * a missed run will be attempted up to one hour past the scheduled invocation.
-   *
-   * The `id` should be unique for the rule/runFn pair.
-   *
-   * Guarantees at most one delivery.
-   */
+
   const scheduleRecurring: Recurring = (id, rule, runFn, options = {}) => {
     const { lockExpireMs, persistScheduledMs } = options
     const key = `recurring:${id}`
@@ -45,6 +45,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
     // Called for each invocation
     const runJob = async (date: Date) => {
       deferred = defer()
+      emit('schedule:recurring', { id, rule, date })
       const scheduledTime = date.getTime()
       const lockKey = `${key}:${scheduledTime}:lock`
       // Attempt to get an exclusive lock.
@@ -58,6 +59,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
         }
         // Run job
         await runFn(date)
+        emit('run:recurring', { id, rule, date })
       }
       deferred.done()
     }
@@ -94,13 +96,6 @@ export const jobScheduler = (opts?: RedisOptions) => {
 
   const getDelayedKey = (id: string) => `delayed:${id}`
 
-  /**
-   * Schedule data to be delivered at a later date. Duplicate payloads
-   * will be ignored. `scheduleFor` accepts a number of milliseconds
-   * in the future or a date. Use in conjunction with `runDelayed`.
-   *
-   * Returns a boolean indicating if the item  was successfully scheduled.
-   */
   const scheduleDelayed: Delayed = async (id, data, scheduleFor) => {
     const key = getDelayedKey(id)
     // Timestamp for delivery
@@ -110,19 +105,13 @@ export const jobScheduler = (opts?: RedisOptions) => {
         : scheduleFor.getTime()
     // Add data to sorted set
     const res = await redis.zadd(key, score, Buffer.from(data))
-    return res === 1
+    const success = res === 1
+    if (success) {
+      emit('schedule:delayed', { id, scheduleFor })
+    }
+    return success
   }
 
-  /**
-   * Check for delayed items according to the recurrence rule. Default
-   * interval is every minute. Calls `runFn` for the batch of items where
-   * the delayed timestamp is <= now. The default number of items to
-   * retrieve at one time is 100.
-   *
-   * The `id` parameter should match the `id` passed to `scheduleDelayed`. 
-   *
-   * Guarantees at least one delivery.
-   */
   const runDelayed: RunDelayed = (id, runFn, options = {}) => {
     const { rule = '* * * * *', lockExpireMs, limit = 100 } = options
     const key = getDelayedKey(id)
@@ -153,6 +142,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
           await runFn(items)
           // Remove delayed items
           await redis.zremrangebyscore(key, '-inf', now)
+          emit('run:delayed', { id, items: items.length })
         }
       }
       deferred.done()
@@ -171,13 +161,49 @@ export const jobScheduler = (opts?: RedisOptions) => {
     return { schedule, stop }
   }
 
-  /**
-   * Call stop on all schedulers and close the Redis connection
-   */
   const stop = async () => {
     await Promise.all(stopFns.map((stop) => stop()))
     redis.disconnect()
   }
 
-  return { scheduleRecurring, scheduleDelayed, runDelayed, stop }
+  return {
+    /**
+     * Schedule a recurring job. `runFn` will be called for every invocation of the rule.
+     *
+     * Set `persistScheduledMs` to a value greater than the frequency of the cron
+     * rule to guarantee that the last missed job will be run. This is useful for
+     * infrequent jobs that cannot be missed. For example, if you have a job that runs
+     * at 6am daily, you might want to set `persistScheduledMs` to `ms('25h')` so that
+     * a missed run will be attempted up to one hour past the scheduled invocation.
+     *
+     * The `id` should be unique for the rule/runFn pair.
+     *
+     * Guarantees at most one delivery.
+     */
+    scheduleRecurring,
+    /**
+     * Schedule data to be delivered at a later date. Duplicate payloads
+     * will be ignored. `scheduleFor` accepts a number of milliseconds
+     * in the future or a date. Use in conjunction with `runDelayed`.
+     *
+     * Returns a boolean indicating if the item  was successfully scheduled.
+     */
+    scheduleDelayed,
+    /**
+     * Check for delayed items according to the recurrence rule. Default
+     * interval is every minute. Calls `runFn` for the batch of items where
+     * the delayed timestamp is <= now. The default number of items to
+     * retrieve at one time is 100.
+     *
+     * The `id` parameter should match the `id` passed to `scheduleDelayed`.
+     *
+     * Guarantees at least one delivery.
+     */
+    runDelayed,
+    /**
+     * Call stop on all schedulers and close the Redis connection
+     */
+    stop,
+    emitter,
+  }
 }

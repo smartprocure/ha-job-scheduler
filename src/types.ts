@@ -41,3 +41,9 @@ export type RunDelayed = (
   runFn: DelayedFn,
   options?: DelayedOptions
 ) => GracefulShutdown
+
+export type Events =
+  | 'schedule:recurring'
+  | 'schedule:delayed'
+  | 'run:recurring'
+  | 'run:delayed'

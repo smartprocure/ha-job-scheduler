@@ -43,7 +43,7 @@ export type RunDelayed = (
 ) => GracefulShutdown
 
 export type Events =
-  | 'schedule:recurring'
-  | 'schedule:delayed'
-  | 'run:recurring'
-  | 'run:delayed'
+  | 'recurring:schedule'
+  | 'recurring:run'
+  | 'delayed:schedule'
+  | 'delayed:run'

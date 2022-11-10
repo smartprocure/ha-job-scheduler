@@ -45,7 +45,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
     // Called for each invocation
     const runJob = async (date: Date) => {
       deferred = defer()
-      emit('schedule:recurring', { id, rule, date })
+      emit('recurring:schedule', { id, rule, date })
       const scheduledTime = date.getTime()
       const lockKey = `${key}:${scheduledTime}:lock`
       // Attempt to get an exclusive lock.
@@ -59,7 +59,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
         }
         // Run job
         await runFn(date)
-        emit('run:recurring', { id, rule, date })
+        emit('recurring:run', { id, rule, date })
       }
       deferred.done()
     }
@@ -107,7 +107,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
     const res = await redis.zadd(key, score, Buffer.from(data))
     const success = res === 1
     if (success) {
-      emit('schedule:delayed', { id, scheduleFor })
+      emit('delayed:schedule', { id, scheduleFor })
     }
     return success
   }
@@ -142,7 +142,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
           await runFn(items)
           // Remove delayed items
           await redis.zremrangebyscore(key, '-inf', now)
-          emit('run:delayed', { id, items: items.length })
+          emit('delayed:run', { id, items: items.length })
         }
       }
       deferred.done()
@@ -201,7 +201,7 @@ export const jobScheduler = (opts?: RedisOptions) => {
      */
     runDelayed,
     /**
-     * Call stop on all schedulers and close the Redis connection
+     * Call stop on all schedulers and close the Redis connection.
      */
     stop,
     emitter,

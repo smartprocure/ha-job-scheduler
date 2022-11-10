@@ -1,3 +1,7 @@
+# 0.5.0
+
+* Change event names to `noun:verb` pattern.
+
 # 0.4.0
 
 * Emit events: `schedule:recurring`, `schedule:delayed`, `run:recurring`, `run:delayed`.
